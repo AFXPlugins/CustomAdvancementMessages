@@ -5,7 +5,7 @@
 
     <groupId>me.customadvancement</groupId>
     <artifactId>CustomAdvancementMessages</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <name>CustomAdvancementMessages</name>
     <description>Displays a PlaceholderAPI-formatted name in advancement broadcast messages</description>
 

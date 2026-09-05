@@ -1,6 +1,5 @@
 package afx.customadvancementmessages.config.lib;
 
-import com.google.common.base.Preconditions;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -9,6 +8,8 @@ import org.bukkit.configuration.file.YamlRepresenter;
 import org.bukkit.plugin.Plugin;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.nodes.Tag;
+import org.yaml.snakeyaml.representer.Represent;
 import org.yaml.snakeyaml.representer.Representer;
 
 import java.io.*;
@@ -24,36 +25,55 @@ public class ConfigUpdater {
     private static final char SEPARATOR = '.';
     private static final Charset DEFAULT_CHARSET = StandardCharsets.UTF_8;
 
-	/**
-	 * Update the YAML file inside the plugin folder, only if it does not match the file from the JAR.
-	 *
-	 * @param plugin          the main class instance where you extend JavaPlugin.
-	 * @param resourceName    the path to your original YAML file inside the JAR.
-	 * @param toUpdate        the file you want to update.
-	 * @param ignoredSections the array of ignored section values, where each element represents the full path or the first path of the ignored section
-	 *                        and the value is the YAML content to keep unchanged.
-	 * @throws IOException if an I/O error occurs when writing to BufferedWriter or if the file does not exist,
-	 *                     is a directory rather than a regular file, or for some other reason cannot be opened for reading.
-	 */
+    /**
+     * Update the YAML file inside the plugin folder, only if it does not match the file from the JAR.
+     *
+     * @param plugin          the main class instance where you extend JavaPlugin.
+     * @param resourceName    the path to your original YAML file inside the JAR.
+     * @param toUpdate        the file you want to update.
+     * @param ignoredSections the array of ignored section values, where each element represents the full path or the first path of the ignored section
+     *                        and the value is the YAML content to keep unchanged.
+     * @throws IOException if an I/O error occurs when writing to BufferedWriter or if the file does not exist,
+     *                     is a directory rather than a regular file, or for some other reason cannot be opened for reading.
+     */
     public static void update(Plugin plugin, String resourceName, File toUpdate, String... ignoredSections) throws IOException {
         update(plugin, resourceName, toUpdate, Arrays.asList(ignoredSections));
     }
 
-	/**
-	 * Update the YAML file inside the plugin folder, only if it does not match the file from the JAR.
-	 *
-	 * @param plugin the main class instance where you extend JavaPlugin.
-	 * @param resourceName the path to your original YAML file inside the JAR.
-	 * @param toUpdate the file you want to update.
-	 * @param ignoredSections the list of ignored section values, where each element represents the full path or the first path of
-	 *                           the ignored section and the value is the YAML content to keep unchanged.
-	 * @throws IOException if an I/O error occurs when writing to BufferedWriter or if the file does not exist,
-	 *                     is a directory rather than a regular file, or for some other reason cannot be opened for reading.
-	 */
+    /**
+     * Update the YAML file inside the plugin folder, only if it does not match the file from the JAR.
+     *
+     * @param plugin the main class instance where you extend JavaPlugin.
+     * @param resourceName the path to your original YAML file inside the JAR.
+     * @param toUpdate the file you want to update.
+     * @param ignoredSections the list of ignored section values, where each element represents the full path or the first path of
+     *                           the ignored section and the value is the YAML content to keep unchanged.
+     * @throws IOException if an I/O error occurs when writing to BufferedWriter or if the file does not exist,
+     *                     is a directory rather than a regular file, or for some other reason cannot be opened for reading.
+     */
     public static void update(Plugin plugin, String resourceName, File toUpdate, List<String> ignoredSections) throws IOException {
-        Preconditions.checkArgument(toUpdate.exists(), "The toUpdate file doesn't exist!");
+        if (!toUpdate.exists()) {
+            // Previously Preconditions.checkArgument(...), which throws
+            // IllegalArgumentException — NOT an IOException, so this used
+            // to slip straight past the "catch (IOException e)" that every
+            // call site (e.g. ConfigMigrator) wraps this in, crashing
+            // instead of being logged and recovered from.
+            throw new IOException("The toUpdate file doesn't exist: " + toUpdate.getPath());
+        }
 
-        FileConfiguration defaultConfig = YamlConfiguration.loadConfiguration(new InputStreamReader(plugin.getResource(resourceName), DEFAULT_CHARSET));
+        InputStream defaultResource = plugin.getResource(resourceName);
+        if (defaultResource == null) {
+            // Previously passed straight into `new InputStreamReader(null, ...)`,
+            // which throws a NullPointerException — again, not an
+            // IOException, so it also used to bypass the same error
+            // handling instead of being reported clearly.
+            throw new IOException("Bundled resource not found in jar: " + resourceName);
+        }
+
+        FileConfiguration defaultConfig;
+        try (InputStream in = defaultResource) {
+            defaultConfig = YamlConfiguration.loadConfiguration(new InputStreamReader(in, DEFAULT_CHARSET));
+        }
         FileConfiguration currentConfig = YamlConfiguration.loadConfiguration(Files.newBufferedReader(toUpdate.toPath(), DEFAULT_CHARSET));
         Map<String, String> comments = parseComments(plugin, resourceName, defaultConfig);
         Map<String, String> ignoredSectionsValues = parseIgnoredSections(toUpdate, comments, ignoredSections == null ? Collections.emptyList() : ignoredSections);
@@ -82,29 +102,29 @@ public class ConfigUpdater {
         //Used for converting objects to yaml
         Yaml yaml = getYamlWriter();
 
-       for (String fullKey : defaultConfig.getKeys(true)) {
+        for (String fullKey : defaultConfig.getKeys(true)) {
             String indents = KeyUtils.getIndents(fullKey, SEPARATOR);
 
 
-           if (!ignoredSectionsValues.isEmpty()) {
-               if (writeIgnoredSectionValueIfExists(ignoredSectionsValues, writer, fullKey))
-                   continue;
-           }
-           writeCommentIfExists(comments, writer, fullKey, indents);
-           Object currentValue = currentConfig.get(fullKey);
+            if (!ignoredSectionsValues.isEmpty()) {
+                if (writeIgnoredSectionValueIfExists(ignoredSectionsValues, writer, fullKey))
+                    continue;
+            }
+            writeCommentIfExists(comments, writer, fullKey, indents);
+            Object currentValue = currentConfig.get(fullKey);
 
-           if (currentValue == null)
-               currentValue = defaultConfig.get(fullKey);
+            if (currentValue == null)
+                currentValue = defaultConfig.get(fullKey);
 
-           String[] splitFullKey = fullKey.split("[" + SEPARATOR + "]");
-           String trailingKey = splitFullKey[splitFullKey.length - 1];
+            String[] splitFullKey = fullKey.split("[" + SEPARATOR + "]");
+            String trailingKey = splitFullKey[splitFullKey.length - 1];
 
-           if (currentValue instanceof ConfigurationSection) {
-               writeConfigurationSection(writer, indents, trailingKey, (ConfigurationSection) currentValue);
-               continue;
-           }
-           writeYamlValue(yaml, writer, indents, trailingKey, currentValue);
-       }
+            if (currentValue instanceof ConfigurationSection) {
+                writeConfigurationSection(writer, indents, trailingKey, (ConfigurationSection) currentValue);
+                continue;
+            }
+            writeYamlValue(yaml, writer, indents, trailingKey, currentValue);
+        }
 
         String danglingComments = comments.get(null);
 
@@ -126,7 +146,15 @@ public class ConfigUpdater {
     private static Map<String, String> parseComments(Plugin plugin, String resourceName, FileConfiguration defaultConfig) throws IOException {
         //keys are in order
         List<String> keys = new ArrayList<>(defaultConfig.getKeys(true));
-        BufferedReader reader = new BufferedReader(new InputStreamReader(plugin.getResource(resourceName), DEFAULT_CHARSET));
+        InputStream resource = plugin.getResource(resourceName);
+        if (resource == null) {
+            // Same defense as the guard in update() — this re-opens the
+            // same bundled resource a second time, so in practice this
+            // won't trip if update()'s own guard already passed, but keep
+            // this safe on its own rather than relying on caller order.
+            throw new IOException("Bundled resource not found in jar: " + resourceName);
+        }
+        BufferedReader reader = new BufferedReader(new InputStreamReader(resource, DEFAULT_CHARSET));
         Map<String, String> comments = new LinkedHashMap<>();
         StringBuilder commentBuilder = new StringBuilder();
         KeyBuilder keyBuilder = new KeyBuilder(defaultConfig, SEPARATOR);
@@ -197,6 +225,13 @@ public class ConfigUpdater {
         DumperOptions options = new DumperOptions();
         options.setLineBreak(DumperOptions.LineBreak.UNIX);
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        // Do NOT use options.setDefaultScalarStyle(DOUBLE_QUOTED) here —
+        // see the identical note in getYamlWriter() below for why that
+        // forces SnakeYAML to emit explicit !!int/!!float tags on numeric
+        // values. Bukkit's YamlRepresenter (used just below) already
+        // double-quotes Strings on its own, so nothing further is needed
+        // here for the "match the rest of the file's style" goal this used
+        // to (incorrectly) chase with a blanket scalar style.
         Yaml yaml = new Yaml(new YamlConstructor(), new YamlRepresenter(), options);
 
         Map<Object, Object> root = (Map<Object, Object>) yaml.load(new InputStreamReader(new FileInputStream(toUpdate), DEFAULT_CHARSET));
@@ -410,23 +445,40 @@ public class ConfigUpdater {
         return null;
     }
 
-	/**
-	 * Writes the current value with the provided trailing key to the provided writer.
-	 *
-	 * @param yamlWriter     The {@link Yaml} object used for converting to yaml
-	 * @param bufferedWriter The writer to write the value to.
-	 * @param indents        The string representation of the indentation.
-	 * @param trailingKey    The trailing key for the YAML value.
-	 * @param currentValue   The current value to write as YAML.
-	 * @throws IOException If an I/O error occurs while writing the YAML value.
-	 */
-	private static void writeYamlValue(final Yaml yamlWriter, final BufferedWriter bufferedWriter, final String indents, final String trailingKey, final Object currentValue) throws IOException {
+    /**
+     * Writes the current value with the provided trailing key to the provided writer.
+     *
+     * @param yamlWriter     The {@link Yaml} object used for converting to yaml
+     * @param bufferedWriter The writer to write the value to.
+     * @param indents        The string representation of the indentation.
+     * @param trailingKey    The trailing key for the YAML value.
+     * @param currentValue   The current value to write as YAML.
+     * @throws IOException If an I/O error occurs while writing the YAML value.
+     */
+    private static void writeYamlValue(final Yaml yamlWriter, final BufferedWriter bufferedWriter, final String indents, final String trailingKey, final Object currentValue) throws IOException {
         Map<String, Object> map = Collections.singletonMap(trailingKey, currentValue);
-		String yaml = yamlWriter.dump(map);
-		yaml = yaml.substring(0, yaml.length() - 1).replace("\n", "\n" + indents);
-		final String toWrite = indents + yaml + "\n";
-		bufferedWriter.write(toWrite);
-	}
+        String yaml = yamlWriter.dump(map);
+        // The custom Representer in getYamlWriter() forces every String it
+        // touches into double-quoted style so that string VALUES like
+        // player-name-format: "{player}" keep their quotes without
+        // SnakeYAML falling back to explicit !!int/!!float tags on numeric
+        // values. trailingKey is itself a String, so without this fix-up
+        // it goes through that same representer and comes out quoted too -
+        // "config-version": 1 instead of config-version: 1. That silently
+        // broke ConfigMigrator's plain-text `^key\s*:` line matching
+        // (renameKey and forceBundledValue), leaving config-version
+        // permanently stuck at whatever it was the first time this ran.
+        // Undo the quoting on just the key - the only spot the
+        // representer's inability to tell keys from values actually causes
+        // a problem - without touching how values themselves are dumped.
+        String quotedKey = "\"" + trailingKey + "\":";
+        if (yaml.startsWith(quotedKey)) {
+            yaml = trailingKey + ":" + yaml.substring(quotedKey.length());
+        }
+        yaml = yaml.substring(0, yaml.length() - 1).replace("\n", "\n" + indents);
+        final String toWrite = indents + yaml + "\n";
+        bufferedWriter.write(toWrite);
+    }
 
     /**
      * Writes the value associated with the ignored section to the provided writer,
@@ -451,29 +503,51 @@ public class ConfigUpdater {
         return false;
     }
 
-	/**
-	 * Writes a configuration section with the provided trailing key and the current value to the provided writer.
-	 *
-	 * @param bufferedWriter The writer to write the configuration section to.
-	 * @param indents        The string representation of the indentation level.
-	 * @param trailingKey    The trailing key for the configuration section.
-	 * @param configurationSection   The current value of the configuration section.
-	 * @throws IOException If an I/O error occurs while writing the configuration section.
-	 */
-	private static void writeConfigurationSection(final BufferedWriter bufferedWriter, final String indents, final String trailingKey, final ConfigurationSection configurationSection) throws IOException {
-		bufferedWriter.write(indents + trailingKey + ":");
-		if (!(configurationSection).getKeys(false).isEmpty()) {
-			bufferedWriter.write("\n");
-		} else {
-			bufferedWriter.write(" {}\n");
-		}
-	}
+    /**
+     * Writes a configuration section with the provided trailing key and the current value to the provided writer.
+     *
+     * @param bufferedWriter The writer to write the configuration section to.
+     * @param indents        The string representation of the indentation level.
+     * @param trailingKey    The trailing key for the configuration section.
+     * @param configurationSection   The current value of the configuration section.
+     * @throws IOException If an I/O error occurs while writing the configuration section.
+     */
+    private static void writeConfigurationSection(final BufferedWriter bufferedWriter, final String indents, final String trailingKey, final ConfigurationSection configurationSection) throws IOException {
+        bufferedWriter.write(indents + trailingKey + ":");
+        if (!(configurationSection).getKeys(false).isEmpty()) {
+            bufferedWriter.write("\n");
+        } else {
+            bufferedWriter.write(" {}\n");
+        }
+    }
 
     private static Yaml getYamlWriter() {
         DumperOptions dumperOptions = new DumperOptions();
         dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         dumperOptions.setAllowUnicode(true);
-
-        return new Yaml(dumperOptions);
+        // Deliberately NOT using dumperOptions.setDefaultScalarStyle(DOUBLE_QUOTED)
+        // here. That forces EVERY scalar — numbers and booleans included —
+        // into double quotes. A double-quoted "1.2" is, on its own,
+        // indistinguishable from the string "1.2", so to preserve the
+        // value's real type (int, float, ...) through the round trip,
+        // SnakeYAML has to fall back to writing an explicit tag alongside
+        // it, turning a plain config-version: 1.2 into
+        // config-version: !!float "1.2" the very first time this updater
+        // runs against any existing config.yml.
+        //
+        // Only String values actually need the double-quote treatment (so
+        // a value like player-name-format: "{player}" isn't silently
+        // rewritten to player-name-format: '{player}'), so give String its
+        // own Represent implementation below instead of a blanket
+        // DumperOptions style. Every other type (numbers, booleans, etc.)
+        // falls through to Representer's normal handling, which writes
+        // them plain/untagged as expected.
+        Representer representer = new Representer(dumperOptions) {
+            {
+                this.representers.put(String.class, (Represent) data ->
+                        representScalar(Tag.STR, (String) data, DumperOptions.ScalarStyle.DOUBLE_QUOTED));
+            }
+        };
+        return new Yaml(representer, dumperOptions);
     }
 }

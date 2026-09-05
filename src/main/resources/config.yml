@@ -20,8 +20,8 @@
 # Supports any PlaceholderAPI placeholder and '&' colors.
 # Use "{player}" for the player's username.
 
-# Default: {player}
-# Example: %luckperms_prefix%%essentials_nickname%
+# Default: "{player}"
+# Example: "%luckperms_prefix%%essentials_nickname%"
 player-name-format: "{player}"
 # ========================================================================
 
@@ -49,5 +49,5 @@ messages:
 
 # =================================
 # PLEASE DO NOT CHANGE THIS VALUE!
-config-version: 1.1
+config-version: 1.2
 # =================================

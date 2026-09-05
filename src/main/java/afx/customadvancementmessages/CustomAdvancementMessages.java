@@ -207,10 +207,12 @@ public final class CustomAdvancementMessages extends JavaPlugin implements Liste
         if (result == null || !result.isUpdateAvailable()) {
             return;
         }
-        sendMessage(player, ChatColor.YELLOW + "[CustomAdvancementMessages] "
-                + ChatColor.WHITE + "A new version is available: " + ChatColor.GREEN + "v" + result.getLatestVersion()
-                + ChatColor.GRAY + " (you're running v" + getDescription().getVersion() + "). "
-                + ChatColor.WHITE + result.getReleaseUrl());
+        sendMessage(player, ChatColor.GOLD + "[CustomAdvancementMessages] "
+                + ChatColor.YELLOW + "Update available:");
+        sendMessage(player, ChatColor.RED + "v" + getDescription().getVersion()
+                + ChatColor.GRAY + " -> "
+                + ChatColor.GREEN + "v" + result.getLatestVersion());
+        sendMessage(player, ChatColor.WHITE + result.getReleaseUrl());
     }
 
     @EventHandler
@@ -295,9 +297,11 @@ public final class CustomAdvancementMessages extends JavaPlugin implements Liste
             return;
         }
         if (result.isUpdateAvailable()) {
-            sendMessage(sender, ChatColor.YELLOW + "A new version is available: " + ChatColor.GREEN + "v"
-                    + result.getLatestVersion() + ChatColor.GRAY + " (you're running " + ChatColor.WHITE + "v"
-                    + getDescription().getVersion() + ChatColor.GRAY + "). " + ChatColor.WHITE + result.getReleaseUrl());
+            sendMessage(sender, ChatColor.YELLOW + "A new version is available:");
+            sendMessage(sender, ChatColor.RED + "v" + getDescription().getVersion()
+                    + ChatColor.GRAY + " -> "
+                    + ChatColor.GREEN + "v" + result.getLatestVersion());
+            sendMessage(sender, ChatColor.WHITE + result.getReleaseUrl());
         } else {
             sendMessage(sender, ChatColor.GREEN + "You're already running the latest version (v"
                     + getDescription().getVersion() + ").");
@@ -350,7 +354,15 @@ public final class CustomAdvancementMessages extends JavaPlugin implements Liste
         sendMessage(sender, ChatColor.RED + "Usages:");
         sendMessage(sender, ChatColor.WHITE + "/" + label + " reload " + ChatColor.YELLOW + "- Reload plugin.");
         sendMessage(sender, ChatColor.WHITE + "/" + label + " update " + ChatColor.YELLOW + "- Check plugin for updates.");
-        sendMessage(sender, ChatColor.WHITE + "/" + label + " preview [task|goal|challenge] " + ChatColor.YELLOW + "- Preview an advancement message with your current config. Defaults to task.");
+        sendMessage(sender, ChatColor.WHITE + "/" + label + " preview "
+                + ChatColor.GOLD + "["
+                + ChatColor.WHITE + "task"
+                + ChatColor.GOLD + "|"
+                + ChatColor.WHITE + "goal"
+                + ChatColor.GOLD + "|"
+                + ChatColor.WHITE + "challenge"
+                + ChatColor.GOLD + "] "
+                + ChatColor.YELLOW + "- Preview an advancement message with your current config. Defaults to task.");
     }
 
     private boolean hasPermission(CommandSender sender, String permission) {
@@ -400,6 +412,21 @@ public final class CustomAdvancementMessages extends JavaPlugin implements Liste
         // JSON rewriting logic below almost unchanged.
         String json = packet.getMessageJson();
         if (json == null || json.isBlank()) {
+            return;
+        }
+
+        // Cheap reject before paying for a full JSON parse + object-tree
+        // allocation: this handler runs on EVERY outbound system-chat
+        // packet sent to every player (regular chat routed through this
+        // packet type on modern versions, other plugins' broadcasts, etc),
+        // and only the tiny fraction that are actually one of our three
+        // advancement translate keys are ever relevant. A plain substring
+        // scan of the raw JSON string is orders of magnitude cheaper than
+        // JsonParser.parseString() and produces identical results — every
+        // packet this plugin cares about is built by vanilla with a
+        // strict, always-double-quoted "translate":"chat.type.advancement.*"
+        // key, so the substring check can't produce a false negative here.
+        if (!json.contains("chat.type.advancement.")) {
             return;
         }
 

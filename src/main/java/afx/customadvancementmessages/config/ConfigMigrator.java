@@ -61,9 +61,67 @@ public final class ConfigMigrator {
             // updater to leave a whole block as the user configured it.
             List<String> ignoredSections = Collections.emptyList();
             ConfigUpdater.update(plugin, resourceName, configFile, ignoredSections);
+
+            // Step 3: config-version is a "please don't touch" marker, not
+            // a user-tunable option — ConfigUpdater otherwise treats every
+            // key the same way and carries an existing value straight
+            // through, which would leave this permanently stuck at
+            // whatever it was the very first time a server owner's file
+            // was generated. Force it to the bundled jar's value every
+            // time instead, same as version markers in other AFX plugins.
+            forceBundledValue(plugin, resourceName, configFile, "config-version");
         } catch (IOException e) {
             plugin.getLogger().severe("Could not update " + configFile.getName() + ": " + e.getMessage()
                     + ". Delete the file to regenerate it, or fix it manually.");
+        }
+    }
+
+    /**
+     * Overwrites a single top-level {@code key:} line in {@code configFile}
+     * with that same key's line from the bundled {@code resourceName}
+     * inside the jar, regardless of what the on-disk file currently has.
+     * Unlike everything else this class does, this deliberately discards
+     * the user's existing value — only appropriate for a marker the plugin
+     * itself owns (like {@code config-version}), never for an actual
+     * setting. No-ops if either file is missing the key.
+     */
+    private static void forceBundledValue(JavaPlugin plugin, String resourceName, File configFile, String key) throws IOException {
+        String bundledLine = null;
+        try (java.io.InputStream in = plugin.getResource(resourceName)) {
+            if (in == null) {
+                return;
+            }
+            List<String> bundledLines = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(in, StandardCharsets.UTF_8)).lines().collect(java.util.stream.Collectors.toList());
+            // Tolerate the key appearing either plain (config-version: ...)
+            // or double-quoted ("config-version": ...) - ConfigUpdater's
+            // merge step can emit either depending on how it last wrote the
+            // key, and this match must not silently fail either way.
+            Pattern pattern = Pattern.compile("^\"?" + Pattern.quote(key) + "\"?\\s*:.*$");
+            for (String line : bundledLines) {
+                if (pattern.matcher(line).matches()) {
+                    bundledLine = line;
+                    break;
+                }
+            }
+        }
+
+        if (bundledLine == null) {
+            return;
+        }
+
+        List<String> lines = Files.readAllLines(configFile.toPath(), StandardCharsets.UTF_8);
+        Pattern pattern = Pattern.compile("^\"?" + Pattern.quote(key) + "\"?\\s*:.*$");
+        boolean changed = false;
+        for (int i = 0; i < lines.size(); i++) {
+            if (pattern.matcher(lines.get(i)).matches() && !lines.get(i).equals(bundledLine)) {
+                lines.set(i, bundledLine);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            Files.write(configFile.toPath(), lines, StandardCharsets.UTF_8);
         }
     }
 
@@ -80,8 +138,10 @@ public final class ConfigMigrator {
         // Matches a top-level (unindented) "oldKey:" possibly followed by a
         // value and/or an inline "# comment" on the same line. Group 1 keeps
         // everything after the key name (the ": value  # comment" part) so
-        // it's carried over unchanged.
-        Pattern pattern = Pattern.compile("^" + Pattern.quote(oldKey) + "(\\s*:.*)$");
+        // it's carried over unchanged. The key itself may or may not be
+        // double-quoted ("oldKey": ...) depending on how ConfigUpdater last
+        // wrote it out, so both forms are tolerated here.
+        Pattern pattern = Pattern.compile("^\"?" + Pattern.quote(oldKey) + "\"?(\\s*:.*)$");
 
         boolean foundOld = false;
         boolean foundNew = false;
@@ -89,7 +149,7 @@ public final class ConfigMigrator {
 
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            if (line.startsWith(newKey + ":")) {
+            if (line.startsWith(newKey + ":") || line.startsWith("\"" + newKey + "\":")) {
                 foundNew = true;
             }
             Matcher matcher = pattern.matcher(line);
@@ -107,6 +167,9 @@ public final class ConfigMigrator {
 
         Matcher matcher = pattern.matcher(lines.get(matchIndex));
         if (matcher.matches()) {
+            // Write the new key unquoted regardless of how the old key was
+            // quoted - matches the bundled config's convention and keeps
+            // forceBundledValue's own plain-key match working afterward.
             lines.set(matchIndex, newKey + matcher.group(1));
             Files.write(configFile.toPath(), lines, StandardCharsets.UTF_8);
         }
